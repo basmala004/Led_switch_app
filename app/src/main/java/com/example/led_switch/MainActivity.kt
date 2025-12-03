@@ -1,6 +1,5 @@
 package com.example.espcontroller
 
-import com.example.led_switch.R
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,67 +14,76 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.*
-import java.net.HttpURLConnection
-import java.net.URL
+import org.eclipse.paho.client.mqttv3.*
+import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
+import com.example.led_switch.R
+
+
 
 class MainActivity : ComponentActivity() {
+
+    private lateinit var mqttClient: MqttClient
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { ControllerUI() }
+
+        // Connect to MQTT broker
+        connectMqtt()
+
+        setContent { ControllerUI(mqttClient) }
+    }
+
+    private fun connectMqtt() {
+        val brokerUrl = "tcp://broker.hivemq.com:1883" // Replace with your broker URL
+        val clientId = MqttClient.generateClientId()
+        mqttClient = MqttClient(brokerUrl, clientId, MemoryPersistence())
+        val options = MqttConnectOptions().apply {
+            isCleanSession = true
+            userName = "esp32" // if needed
+            password = "123456789sS".toCharArray() // if needed
+        }
+
+        mqttClient.connect(options)
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ControllerUI() {
+fun ControllerUI(mqttClient: MqttClient) {
 
     var red by remember { mutableStateOf(false) }
     var green by remember { mutableStateOf(false) }
     var blue by remember { mutableStateOf(false) }
 
-    // Switch availability
-    var canSend by remember { mutableStateOf(true) }
+    // Switch availability (optional, since MQTT has no rate limit like ThingSpeak)
+    val canSend = true
 
-    // Countdown timer for ThingSpeak limit
-    var countdown by remember { mutableStateOf(0) }
-
-    // Fetch initial states
+    // Subscribe to LED topics to get initial states
     LaunchedEffect(Unit) {
-        val (r, g, b) = fetchLedStates()
-        red = r
-        green = g
-        blue = b
-    }
-
-    fun startCountdown() {
-        canSend = false
-        countdown = 15  // ThingSpeak free limit = 15 seconds
-
-        CoroutineScope(Dispatchers.Main).launch {
-            while (countdown > 0) {
-                delay(1000)
-                countdown--
+        mqttClient.setCallback(object : MqttCallback {
+            override fun connectionLost(cause: Throwable?) {}
+            override fun messageArrived(topic: String?, message: MqttMessage?) {
+                val payload = message.toString()
+                when (topic) {
+                    "esp32/red" -> red = payload == "1"
+                    "esp32/green" -> green = payload == "1"
+                    "esp32/blue" -> blue = payload == "1"
+                }
             }
-            canSend = true
-        }
+
+            override fun deliveryComplete(token: IMqttDeliveryToken?) {}
+        })
+
+        mqttClient.subscribe("esp32/red")
+        mqttClient.subscribe("esp32/green")
+        mqttClient.subscribe("esp32/blue")
     }
 
-    fun sendToServer() {
-        val apiKey = "6O2EAN3G693D3FQB"
-        val url =
-            "https://api.thingspeak.com/update?api_key=$apiKey" +
-                    "&field1=${if (red) 1 else 0}" +
-                    "&field2=${if (green) 1 else 0}" +
-                    "&field3=${if (blue) 1 else 0}"
-
+    fun sendMqtt(topic: String, state: Boolean) {
         CoroutineScope(Dispatchers.IO).launch {
-            val connection = URL(url).openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.inputStream.bufferedReader().readText()
-            connection.disconnect()
+            val message = MqttMessage((if (state) "1" else "0").toByteArray())
+            mqttClient.publish(topic, message)
         }
-
-        startCountdown()
     }
 
     Scaffold(
@@ -99,35 +107,24 @@ fun ControllerUI() {
         ) {
 
             Image(
-                painterResource(id = R.drawable.logo1),
+                painterResource(id = R.drawable.logo),
                 contentDescription = "Logo",
                 modifier = Modifier.size(350.dp)
             )
 
-            // ====================== NEW NOTE ===========================
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = if (canSend)
-                    "You can send a command now."
-                else
-                    "Please wait $countdown seconds before the next command…",
-                color = Color.Gray,
-                fontWeight = FontWeight.Bold
-            )
             Spacer(modifier = Modifier.height(20.dp))
-            // ============================================================
 
             LEDControl("Red", red, canSend) {
                 red = it
-                sendToServer()
+                sendMqtt("esp32/red", it)
             }
             LEDControl("Yellow", blue, canSend) {
                 blue = it
-                sendToServer()
+                sendMqtt("esp32/blue", it)
             }
             LEDControl("Green", green, canSend) {
                 green = it
-                sendToServer()
+                sendMqtt("esp32/green", it)
             }
         }
     }
@@ -161,9 +158,8 @@ fun LEDControl(label: String, state: Boolean, enabled: Boolean, onChange: (Boole
                 )
 
                 Switch(
-                    modifier = Modifier,
                     checked = state,
-                    enabled = enabled,        // << DISABLE SWITCH HERE
+                    enabled = enabled,
                     onCheckedChange = {
                         if (enabled) onChange(it)
                     },
@@ -177,33 +173,6 @@ fun LEDControl(label: String, state: Boolean, enabled: Boolean, onChange: (Boole
                     )
                 )
             }
-        }
-    }
-}
-
-suspend fun fetchLedStates(): Triple<Boolean, Boolean, Boolean> {
-    val channelID = "3188417"
-    val readAPI = "URNIIJK97DPHUJ5E"
-
-    return withContext(Dispatchers.IO) {
-        try {
-            val url = URL(
-                "https://api.thingspeak.com/channels/$channelID/feeds/last.json?api_key=$readAPI"
-            )
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            val response = conn.inputStream.bufferedReader().readText()
-            conn.disconnect()
-
-            val json = org.json.JSONObject(response)
-
-            val r = json.optString("field1", "0") == "1"
-            val g = json.optString("field2", "0") == "1"
-            val b = json.optString("field3", "0") == "1"
-
-            Triple(r, g, b)
-        } catch (e: Exception) {
-            Triple(false, false, false)
         }
     }
 }

@@ -42,7 +42,6 @@ android {
 dependencies {
     implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
     implementation("org.eclipse.paho:org.eclipse.paho.android.service:1.1.1")
-
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
