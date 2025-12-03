@@ -30,8 +30,8 @@ class MainActivity : ComponentActivity() {
 fun ControllerUI() {
 
     var red by remember { mutableStateOf(false) }
+    var yellow by remember { mutableStateOf(false) }
     var green by remember { mutableStateOf(false) }
-    var blue by remember { mutableStateOf(false) }
 
     // Switch availability
     var canSend by remember { mutableStateOf(true) }
@@ -41,10 +41,10 @@ fun ControllerUI() {
 
     // Fetch initial states
     LaunchedEffect(Unit) {
-        val (r, g, b) = fetchLedStates()
+        val (r, y, g) = fetchLedStates()
         red = r
+        yellow = y
         green = g
-        blue = b
     }
 
     fun startCountdown() {
@@ -65,8 +65,8 @@ fun ControllerUI() {
         val url =
             "https://api.thingspeak.com/update?api_key=$apiKey" +
                     "&field1=${if (red) 1 else 0}" +
-                    "&field2=${if (green) 1 else 0}" +
-                    "&field3=${if (blue) 1 else 0}"
+                    "&field2=${if (yellow) 1 else 0}" +
+                    "&field3=${if (green) 1 else 0}"
 
         CoroutineScope(Dispatchers.IO).launch {
             val connection = URL(url).openConnection() as HttpURLConnection
@@ -121,8 +121,9 @@ fun ControllerUI() {
                 red = it
                 sendToServer()
             }
-            LEDControl("Yellow", blue, canSend) {
-                blue = it
+
+            LEDControl("Yellow", yellow, canSend) {
+                yellow = it
                 sendToServer()
             }
             LEDControl("Green", green, canSend) {
